@@ -10,9 +10,9 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 
-SYMBOL = "ONEUSDT"
-HOURS_BACK = 1
-OUTPUT_FILE = "data/oneusdt.json"
+SYMBOL = os.getenv("SYMBOL")
+HOURS_BACK = os.getenv("HOURS_BACK")
+OUTPUT_FILE = os.getenv("PATH_DATA") + SYMBOL + ".json"
 
 
 def get_futures_trades(client, symbol, hours_back):
@@ -89,17 +89,17 @@ def main():
     except Exception as e:
         raise SystemExit(f"Не удалось подключиться к Binance: {e}")
 
-    trades = get_futures_trades(client, SYMBOL, HOURS_BACK)
-    if not trades:
-        print("Трейды не найдены.")
-        return
+    # trades = get_futures_trades(client, SYMBOL, HOURS_BACK)
+    # if not trades:
+    #     print("Трейды не найдены.")
+    #     return
 
-    save_to_json(trades, OUTPUT_FILE)
+    # save_to_json(trades, OUTPUT_FILE)
 
-    first = datetime.fromtimestamp(trades[0]["T"] / 1000, tz=timezone.utc)
-    last = datetime.fromtimestamp(trades[-1]["T"] / 1000, tz=timezone.utc)
-    print(f"Первый трейд: {first}")
-    print(f"Последний трейд: {last}")
+    # first = datetime.fromtimestamp(trades[0]["T"] / 1000, tz=timezone.utc)
+    # last = datetime.fromtimestamp(trades[-1]["T"] / 1000, tz=timezone.utc)
+    # print(f"Первый трейд: {first}")
+    # print(f"Последний трейд: {last}")
 
 
 if __name__ == "__main__":
