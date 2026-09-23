@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Бектест · 5s свечи</title>
+
+  <!-- Tailwind -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lightweight Charts (TradingView) -->
+  <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+
+  <style>
+    /* убираем "синюю" подсветку выделения на графике */
+    #chart { -webkit-tap-highlight-color: transparent; }
+    #chart a[href] { display: none !important; } /* логотип TV, если не нужен */
+  </style>
+</head>
+
+<body class="min-h-screen bg-slate-950 text-slate-200 antialiased">
+  <div class="mx-auto max-w-7xl p-4 md:p-6">
+
+    <!-- ─────────── Заголовок ─────────── -->
+    <header class="mb-5 flex flex-wrap items-end justify-between gap-4">
+      <div>
+        <h1 class="text-2xl font-semibold text-white">Бектест стратегии</h1>
+        <p class="text-sm text-slate-400">
+          Таймфрейм: <span class="text-slate-200 font-medium">5 секунд</span> ·
+          <span id="coinName" class="text-slate-200 font-medium">BTCUSDT</span> ·
+          <span id="periodLabel" class="text-slate-500"></span>
+        </p>
+      </div>
+
+      <label class="flex cursor-pointer select-none items-center gap-2 text-sm text-slate-300">
+        <input id="toggleTrades" type="checkbox" checked
+               class="h-4 w-4 cursor-pointer accent-emerald-500" />
+        Показывать сделки
+      </label>
+    </header>
+
+    <!-- ─────────── Статистика ─────────── -->
+    <div class="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+        <div class="text-xs uppercase tracking-wide text-slate-500">Сделок</div>
+        <div id="statTrades" class="mt-1 text-xl font-semibold text-white">—</div>
+      </div>
+      <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+        <div class="text-xs uppercase tracking-wide text-slate-500">Winrate</div>
+        <div id="statWinrate" class="mt-1 text-xl font-semibold text-white">—</div>
+      </div>
+      <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+        <div class="text-xs uppercase tracking-wide text-slate-500">Суммарный PnL</div>
+        <div id="statPnl" class="mt-1 text-xl font-semibold text-white">—</div>
+      </div>
+      <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+        <div class="text-xs uppercase tracking-wide text-slate-500">Profit factor</div>
+        <div id="statPf" class="mt-1 text-xl font-semibold text-white">—</div>
+      </div>
+    </div>
+
+    <!-- ─────────── График ─────────── -->
+    <div class="rounded-xl border border-slate-800 bg-slate-900 p-2">
+      <div id="chart" class="h-[560px] w-full"></div>
+    </div>
+
+    <!-- ─────────── Легенда ─────────── -->
+    <div class="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-slate-400">
+      <span class="flex items-center gap-2">
+        <span class="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-500"></span> профитная сделка
+      </span>
+      <span class="flex items-center gap-2">
+        <span class="inline-block h-2.5 w-2.5 rounded-sm bg-red-500"></span> убыточная сделка
+      </span>
+      <span class="flex items-center gap-2">
+        <span class="text-emerald-400">▲</span> вход (IN) ·
+        <span class="text-emerald-400">▼</span> выход (OUT +PnL)
+      </span>
+      <span class="ml-auto text-slate-600">колесо мыши — зум, перетаскивание — скролл</span>
+    </div>
+  </div>
+
+ <script>
+(async () => {
+  'use strict';
+
+  /* ============ КОНФИГ ============ */
+  const SYMBOL   = 'ONEUSDT';
+  const START_MS = 1789849285180;   // включительно
+  const END_MS   = 1789852885070;   // включительно
+  const TF_SEC   = 5;               // целевой таймфрейм
+
+  // зеркала Binance (первое — публичный data-api, обычно без гео-блокировок)
+  const BINANCE_HOSTS = [
+    'https://data-api.binance.vision',
+    'https://api.binance.com',
+    'https://api1.binance.com',
+  ];
+
+  const COLORS = {
+    profit: '#10b981',
+    loss:   '#ef4444',
+    up:     '#22c55e',
+    down:   '#ef4444',
+    bg:     '#0f172a',
+    grid:   '#1e293b',
+    text:   '#94a3b8',
+    border: '#1e293b',
+  };
+
+  const $ = id => document.getElementById(id);
+
+  /* ============================================================
+     1. СВЕЧИ С BINANCE
+     ------------------------------------------------------------
+     Binance отдаёт 1s klines. 5s нет — агрегируем сами.
+     Формат kline: [openTime, open, high, low, close, volume, ...]
+     ============================================================ */
+
+  async function fetch1sKlines(symbol, startMs, endMs) {
+    const out = [];
+    let cursor = startMs;
+    let guard = 0;
+    let hostIdx = 0;
+
+    while (cursor < endMs && guard++ < 100) {
+      const host = BINANCE_HOSTS[hostIdx % BINANCE_HOSTS.length];
+      const url = `${host}/api/v3/klines?symbol=${symbol}` +
+                  `&interval=1s&startTime=${cursor}&endTime=${endMs}&limit=1000`;
+
+      let res;
+      try {
+        res = await fetch(url, { cache: 'no-store' });
+      } catch (e) {
+        // сеть/CORS — пробуем следующее зеркало
+        hostIdx++;
+        if (hostIdx > BINANCE_HOSTS.length * 2) throw e;
+        continue;
+      }
+
+      if (!res.ok) {
+        hostIdx++;
+        if (hostIdx > BINANCE_HOSTS.length * 2) {
+          throw new Error(`Binance HTTP ${res.status}: ${await res.text()}`);
+        }
+        continue;
+      }
+
+      const batch = await res.json();
+      if (!Array.isArray(batch) || batch.length === 0) break;
+
+      out.push(...batch);
+
+      const lastOpen = batch[batch.length - 1][0];
+      cursor = lastOpen + 1000;
+      if (batch.length < 1000) break;
+    }
+
+    return out;
+  }
+
+  function aggregateTo5s(klines) {
+    const buckets = new Map();
+    const stepMs = TF_SEC * 1000;
+
+    for (const k of klines) {
+      const openMs = k[0];
+      const bucketMs = Math.floor(openMs / stepMs) * stepMs;
+      const o = +k[1], h = +k[2], l = +k[3], c = +k[4];
+
+      let b = buckets.get(bucketMs);
+      if (!b) {
+        buckets.set(bucketMs, {
+          time: bucketMs / 1000,   // Lightweight Charts ждёт секунды
+          open: o, high: h, low: l, close: c,
+        });
+      } else {
+        if (h > b.high) b.high = h;
+        if (l < b.low)  b.low  = l;
+        b.close = c;
+      }
+    }
+
+    return [...buckets.values()].sort((a, b) => a.time - b.time);
+  }
+
+  /* ============================================================
+     2. ПОЗИЦИИ ИЗ ../data/positions.json
+     ============================================================ */
+
+  async function loadPositions() {
+    const res = await fetch('../data/positions.json', { cache: 'no-store' });
+    if (!res.ok) throw new Error(`positions.json HTTP ${res.status}`);
+    const data = await res.json();
+    if (!Array.isArray(data)) throw new Error('positions.json должен содержать массив');
+
+    // ms → s, если вдруг прилетело в миллисекундах
+    const toSec = v => {
+      const n = Number(v);
+      return n > 1e12 ? Math.floor(n / 1000) : Math.floor(n);
+    };
+
+    return data
+      .map(p => ({
+        entryTime:  toSec(p.entryTime),
+        exitTime:   toSec(p.exitTime),
+        entryPrice: Number(p.entryPrice),
+        exitPrice:  Number(p.exitPrice),
+        pnl:        Number(p.pnl),
+        side:       p.side,
+        qty:        p.qty,
+        reason:     p.reason,
+        pct:        p.pct,
+      }))
+      .filter(p =>
+        Number.isFinite(p.entryTime) && Number.isFinite(p.exitTime) &&
+        Number.isFinite(p.entryPrice) && Number.isFinite(p.exitPrice) &&
+        Number.isFinite(p.pnl)
+      )
+      .sort((a, b) => a.entryTime - b.entryTime);
+  }
+
+  /* ============================================================
+     3. СТАТИСТИКА
+     ============================================================ */
+
+  function renderStats(positions, candles) {
+    const totalPnl = positions.reduce((s, p) => s + p.pnl, 0);
+    const wins   = positions.filter(p => p.pnl > 0);
+    const losses = positions.filter(p => p.pnl < 0);
+    const gp = wins.reduce((s, p) => s + p.pnl, 0);
+    const gl = Math.abs(losses.reduce((s, p) => s + p.pnl, 0));
+
+    const winrate = positions.length ? (wins.length / positions.length) * 100 : 0;
+    const pf = gl > 0 ? gp / gl : (gp > 0 ? Infinity : 0);
+
+    $('statTrades').textContent  = positions.length;
+    $('statWinrate').textContent = winrate.toFixed(1) + '%';
+    $('statPf').textContent      = pf === Infinity ? '∞' : pf.toFixed(2);
+
+    const pnlEl = $('statPnl');
+    pnlEl.textContent = (totalPnl >= 0 ? '+' : '') + totalPnl.toFixed(2);
+    pnlEl.className = 'mt-1 text-xl font-semibold ' +
+      (totalPnl > 0 ? 'text-emerald-400'
+       : totalPnl < 0 ? 'text-red-400'
+       : 'text-white');
+
+    $('coinName').textContent = SYMBOL;
+
+    if (candles.length) {
+      const fmt = ts => new Date(ts * 1000).toLocaleString('ru-RU', { hour12: false });
+      $('periodLabel').textContent =
+        fmt(candles[0].time) + ' – ' + fmt(candles[candles.length - 1].time);
+    }
+  }
+
+  /* ============================================================
+     4. ГРАФИК
+     ============================================================ */
+
+  let chart, candleSeries;
+  const tradeSeries = [];
+  let markers = [];
+
+  function buildChart(candles) {
+    const chartEl = $('chart');
+
+    chart = LightweightCharts.createChart(chartEl, {
+      layout: {
+        background: { type: 'solid', color: COLORS.bg },
+        textColor: COLORS.text,
+        fontSize: 11,
+      },
+      grid: {
+        vertLines: { color: COLORS.grid },
+        horzLines: { color: COLORS.grid },
+      },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+      rightPriceScale: {
+        borderColor: COLORS.border,
+        scaleMargins: { top: 0.12, bottom: 0.12 },
+      },
+      timeScale: {
+        borderColor: COLORS.border,
+        timeVisible: true,
+        secondsVisible: true,
+        rightOffset: 6,
+      },
+      localization: {
+        timeFormatter: ts =>
+          new Date(ts * 1000).toLocaleTimeString('ru-RU', { hour12: false }),
+      },
+    });
+
+    candleSeries = chart.addCandlestickSeries({
+      upColor:         COLORS.up,
+      downColor:       COLORS.down,
+      borderUpColor:   COLORS.up,
+      borderDownColor: COLORS.down,
+      wickUpColor:     COLORS.up,
+      wickDownColor:   COLORS.down,
+    });
+    candleSeries.setData(candles);
+
+    const ro = new ResizeObserver(entries => {
+      const { width, height } = entries[0].contentRect;
+      chart.applyOptions({ width, height });
+    });
+    ro.observe(chartEl);
+  }
+
+  // привязываем время сделки к ближайшей существующей свече,
+  // иначе Lightweight Charts не покажет маркер
+  function snapToCandle(t, timeSet) {
+    const step = TF_SEC;
+    const b = Math.floor(t / step) * step;
+    if (timeSet.has(b)) return b;
+    for (let d = 1; d <= 30; d++) {
+      if (timeSet.has(b - d * step)) return b - d * step;
+      if (timeSet.has(b + d * step)) return b + d * step;
+    }
+    return null;
+  }
+
+  function drawTrades(positions, candles) {
+    const timeSet = new Set(candles.map(c => c.time));
+
+    positions.forEach(p => {
+      const tIn  = snapToCandle(p.entryTime, timeSet);
+      const tOut = snapToCandle(p.exitTime,  timeSet);
+      if (tIn == null || tOut == null) return;
+
+      const isProfit = p.pnl >= 0;
+      const color = isProfit ? COLORS.profit : COLORS.loss;
+
+      // линия вход→выход
+      if (tIn !== tOut) {
+        const line = chart.addLineSeries({
+          color,
+          lineWidth: 2,
+          lineStyle: LightweightCharts.LineStyle.Solid,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+          autoscaleInfoProvider: () => null,
+        });
+        line.setData([
+          { time: tIn,  value: p.entryPrice },
+          { time: tOut, value: p.exitPrice },
+        ]);
+        tradeSeries.push(line);
+      }
+
+      const pnlText = (p.pnl >= 0 ? '+' : '') + p.pnl.toFixed(2);
+
+      markers.push({
+        time: tIn,
+        position: 'belowBar',
+        color,
+        shape: 'arrowUp',
+        text: 'IN',
+        size: 1,
+      });
+      markers.push({
+        time: tOut,
+        position: 'aboveBar',
+        color,
+        shape: 'arrowDown',
+        text: pnlText,
+        size: 1,
+      });
+    });
+
+    markers.sort((a, b) => a.time - b.time);
+    candleSeries.setMarkers(markers);
+    chart.timeScale().fitContent();
+  }
+
+  /* ============================================================
+     5. ИНИЦИАЛИЗАЦИЯ
+     ============================================================ */
+
+  function showError(msg) {
+    $('chart').innerHTML = `
+      <div class="flex h-full flex-col items-center justify-center gap-3 p-6 text-center text-sm text-red-400">
+        <div>${msg}</div>
+        <div class="max-w-md text-xs text-slate-500">
+          Проверь подключение к интернету и путь <code>../data/positions.json</code>.
+          Открывать страницу нужно через локальный HTTP-сервер
+          (<code>python -m http.server</code>), а не через <code>file://</code>.
+        </div>
+      </div>`;
+  }
+
+  try {
+    // качаем параллельно: свечи + позиции
+    const [klines, positions] = await Promise.all([
+      fetch1sKlines(SYMBOL, START_MS, END_MS),
+      loadPositions().catch(err => {
+        console.warn('positions.json:', err);
+        return [];
+      }),
+    ]);
+
+    if (!klines.length) {
+      throw new Error(`Binance вернул 0 свечей для ${SYMBOL} за указанный период ` +
+                      `(${new Date(START_MS).toISOString()} – ${new Date(END_MS).toISOString()})`);
+    }
+
+    const candles = aggregateTo5s(klines);
+    console.log(
+      `Binance: ${klines.length} × 1s → ${candles.length} × ${TF_SEC}s; ` +
+      `позиций: ${positions.length}`
+    );
+
+    buildChart(candles);
+    renderStats(positions, candles);
+    drawTrades(positions, candles);
+
+    $('toggleTrades').addEventListener('change', e => {
+      const v = e.target.checked;
+      tradeSeries.forEach(s => s.applyOptions({ visible: v }));
+      candleSeries.setMarkers(v ? markers : []);
+    });
+
+  } catch (err) {
+    console.error(err);
+    showError(`Ошибка загрузки: ${err.message}`);
+  }
+})();
+</script>
+</body>
+</html>

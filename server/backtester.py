@@ -3,6 +3,8 @@ import copy
 import os
 from pathlib import Path
 
+from datetime import datetime
+
 from finder import Check_position
 
 # ИМПОРТЫ ДЛЯ ПОСТРОЕНИЯ ГРАФИКА
@@ -31,13 +33,13 @@ def s_to_ms(s): return float(s)*1000
 
 class Position:
     """
-    side: -1, 0, 1
+    status: -1, 0, 1
     qty: объем в монетах
     price_in: цена входа в сделку
     price_out: цена выхода из сделки
     time_in: время входа в сделку
     time_out: время выхода из сделки
-    reason: причина выхода из сделки
+    reason_out: причина выхода из сделки
     pnl: результат в деньгах
     pct: процент движения
     """
@@ -100,6 +102,34 @@ def win_editor(win: Win):
 position = Position()
 history = []
 
+def position_to_dict(pos):
+    # Преобразуем время в Unix-секунды (целое число)
+    # Если time_in/time_out — это datetime или pandas.Timestamp:
+    def to_unix_seconds(t):
+        if isinstance(t, (int, float)):
+            # Если это уже число, предполагаем, что это миллисекунды?
+            # Если секунды — оставляем как есть. Уточните под свои данные.
+            # Здесь пример: если число больше 1e12, то это миллисекунды -> делим на 1000
+            return int(t / 1000) if t > 1e12 else int(t)
+        elif isinstance(t, datetime):
+            return int(t.timestamp())
+        else:
+            # pandas.Timestamp тоже имеет .timestamp()
+            return int(t.timestamp())
+
+    return {
+        "entryTime": to_unix_seconds(pos.time_in),
+        "entryPrice": pos.price_in,
+        "exitTime": to_unix_seconds(pos.time_out),
+        "exitPrice": pos.price_out,
+        "pnl": pos.pnl,
+        # дополнительные поля (не обязательны для графика, но полезны)
+        "side": pos.status,
+        "qty": pos.qty,
+        "reason": pos.reason_out,
+        "pct": pos.pct,
+    }
+
 while True:
     win_editor(win_1)
     win_editor(win_2)
@@ -116,6 +146,11 @@ while True:
     if data[-1]['T'] < END_T:
         for i in history:
             print(i.status, i.pnl, i.pct, "\n")
+
+        json_array = [position_to_dict(p) for p in history]
+
+        with open("../data/positions.json", "w", encoding="utf-8") as f:
+            json.dump(json_array, f, ensure_ascii=False, indent=2)
 
         df = pd.DataFrame([vars(p) for p in history])
         # время в datetime
@@ -159,3 +194,7 @@ while True:
         plt.show()
 
         break
+
+# Или просто получаем строку
+# json_str = json.dumps(json_array, ensure_ascii=False, indent=2)
+# print(json_str)
