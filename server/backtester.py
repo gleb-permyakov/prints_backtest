@@ -86,6 +86,9 @@ def win_editor(win: Win):
             trade_time = trade["T"]
             if trade_time <= END_T - time_span:
                 win.i0 += 1
+            else: break
+        for trade in data[win.i1:]:
+            trade_time = trade["T"]
             if trade_time <= END_T:
                 win.i1 += 1
             else: break
@@ -102,75 +105,61 @@ def win_editor(win: Win):
 position = Position()
 history = []
 
-def position_to_dict(pos):
-    # Преобразуем время в Unix-секунды (целое число)
-    # Если time_in/time_out — это datetime или pandas.Timestamp:
-    def to_unix_seconds(t):
-        if isinstance(t, (int, float)):
-            # Если это уже число, предполагаем, что это миллисекунды?
-            # Если секунды — оставляем как есть. Уточните под свои данные.
-            # Здесь пример: если число больше 1e12, то это миллисекунды -> делим на 1000
-            return int(t / 1000) if t > 1e12 else int(t)
-        elif isinstance(t, datetime):
-            return int(t.timestamp())
-        else:
-            # pandas.Timestamp тоже имеет .timestamp()
-            return int(t.timestamp())
-
-    return {
-        "entryTime": to_unix_seconds(pos.time_in),
-        "entryPrice": pos.price_in,
-        "exitTime": to_unix_seconds(pos.time_out),
-        "exitPrice": pos.price_out,
-        "pnl": pos.pnl,
-        # дополнительные поля (не обязательны для графика, но полезны)
-        "side": pos.status,
-        "qty": pos.qty,
-        "reason": pos.reason_out,
-        "pct": pos.pct,
-    }
-
 while True:
     win_editor(win_1)
     win_editor(win_2)
     Check_position(win_1.arr[win_1.i0:win_1.i1], win_2.arr[win_2.i0:win_2.i1], position)
     if position.reason_out != "":
-        history.append(copy.deepcopy(position))
-        print(position)
+        history.append({
+            "entryTime": position.time_in,
+            "entryPrice": position.price_in,
+            "exitTime": position.time_out,
+            "exitPrice": position.price_out,
+            "pnl": position.pnl,
+            # дополнительные поля (не обязательны для графика, но полезны)
+            "status": position.status,
+            "qty": position.qty,
+            "reason": position.reason_out,
+            "pct": position.pct,
+        })
         position = Position()
 
     END_T += s_to_ms(DELTA_TIME)
-    # if (END_T - START_T) % 10000 == 0:
-    #     print((END_T - START_T) / 1000, "s passed")
+    if (END_T - START_T) % 10000 == 0:
+        print((END_T - START_T) / 1000, "s passed")
 
     if data[-1]['T'] < END_T:
         for i in history:
-            print(i.status, i.pnl, i.pct, "\n")
+            print(i["status"], i["pnl"], i["pct"], "\n")
 
-        json_array = [position_to_dict(p) for p in history]
+        # json_array = [position_to_dict(p) for p in history]
+        json_array = history
 
         with open("../data/positions.json", "w", encoding="utf-8") as f:
             json.dump(json_array, f, ensure_ascii=False, indent=2)
 
-        df = pd.DataFrame([vars(p) for p in history])
-        # время в datetime
-        df["time_out_dt"] = pd.to_datetime(df["time_out"], unit="ms")
-        df["time_in_dt"]  = pd.to_datetime(df["time_in"],  unit="ms")
+        # 2. DataFrame прямо из списка словарей
+        df = pd.DataFrame(history)
 
-        START_CAPITAL = 10   # поставьте своё
+        # 3. Время в datetime (колонки называются как в словаре!)
+        df["exit_dt"] = pd.to_datetime(df["exitTime"], unit="ms")
+        df["entry_dt"] = pd.to_datetime(df["entryTime"], unit="ms")
 
-        df["equity"]   = START_CAPITAL + df["pnl"].cumsum()
-        df["peak"]     = df["equity"].cummax()
-        df["dd"]       = df["equity"] - df["peak"]
-        df["dd_pct"]   = df["dd"] / df["peak"] * 100
+        # 4. Кривая капитала
+        START_CAPITAL = 10
+        df["equity"] = START_CAPITAL + df["pnl"].cumsum()
+        df["peak"]   = df["equity"].cummax()
+        df["dd"]     = df["equity"] - df["peak"]
+        df["dd_pct"] = df["dd"] / df["peak"] * 100
 
+        # 5. График
         fig, (ax1, ax2) = plt.subplots(
             2, 1, figsize=(14, 8), sharex=True,
             gridspec_kw={"height_ratios": [3, 1]}
         )
 
-        # ---- equity ----
-        ax1.plot(df["time_out_dt"], df["equity"],
+        # ---- Equity ----
+        ax1.plot(df["exit_dt"], df["equity"],
                 color="tab:blue", lw=1.5, label="Equity")
         ax1.axhline(START_CAPITAL, color="gray", ls="--", lw=0.8)
         ax1.set_ylabel("Equity, $")
@@ -178,19 +167,16 @@ while True:
         ax1.grid(alpha=0.3)
         ax1.legend(loc="upper left")
 
-        # ---- drawdown ----
-        ax2.fill_between(df["time_out_dt"], df["dd_pct"], 0,
-                        color="tab:red", alpha=0.4)
+        # ---- Просадка ----
+        ax2.fill_between(df["exit_dt"], df["dd_pct"], 0,
+                        color="tab:red", alpha=0.4, label="Drawdown %")
         ax2.set_ylabel("Drawdown, %")
-        ax2.set_xlabel("Время")
+        ax2.set_xlabel("Time")
         ax2.grid(alpha=0.3)
-
-        # формат дат на оси X
-        ax2.xaxis.set_major_locator(mdates.AutoDateLocator())
-        ax2.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d %H:%M"))
-        plt.setp(ax2.xaxis.get_majorticklabels(), rotation=30, ha="right")
+        ax2.legend(loc="lower left")
 
         plt.tight_layout()
+        plt.savefig("../data/equity.png", dpi=120)
         plt.show()
 
         break

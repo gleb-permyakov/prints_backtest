@@ -38,7 +38,7 @@ def Check_position(win_1, win_2, position):
             if long_volume != 0 and short_volume != 0:
                 if side == 1:
                     if (long_volume + quantity*side) == 0: middle_long = middle_long
-                    else: middle_long = middle_long * long_volume/(long_volume + quantity*side) + quantity*price*side/(long_volume + quantity*side) 
+                    else: middle_long = middle_long * long_volume/(long_volume + quantity) + quantity*price*side/(long_volume + quantity) 
                 elif side == -1:
                     if (short_volume + quantity) == 0: middle_short = middle_short
                     else: middle_short = middle_short * short_volume/(short_volume + quantity) + quantity*price/(short_volume + quantity) 
