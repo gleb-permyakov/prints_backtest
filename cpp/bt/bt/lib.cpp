@@ -1,10 +1,13 @@
 #include "lib.h"
 #include "types.h"
 #include <iostream>
+#include <fstream>
 #include <vector>
+#include "json.hpp"
+using json = nlohmann::json;
 
 int after_dot = 2; // точность цены(цифр после точки)
-double koeff = 1.15; // коэффициент перевеса
+double koeff = 1.5; // коэффициент перевеса
 
 double max(double a, double b) {
 	if (a > b) { return a; }
@@ -39,9 +42,9 @@ void check_position(Win& win_1, Win& win_2, Position& position) {
 		//std::cout << win_1.i0 << " " << win_1.i1 << " " << trend_long << " " << trend_short << "\n";
 		// определение направления главного тренда
 		if (trend_long / trend_short >= 1.15) { trend = 2; }
-		else if (trend_long / trend_short >= 1.05 and trend_long / trend_short < 1.2) { trend = 1; }
+		else if (trend_long / trend_short >= 1.05 and trend_long / trend_short < 1.15) { trend = 1; }
 		else if (trend_short / trend_long >= 1.15) { trend = -2; }
-		else if (trend_short / trend_long >= 1.05 and trend_short / trend_long < 1.2) { trend = -1; }
+		else if (trend_short / trend_long >= 1.05 and trend_short / trend_long < 1.15) { trend = -1; }
 	}
 	else {
 		return;
@@ -108,13 +111,13 @@ void check_position(Win& win_1, Win& win_2, Position& position) {
 	//std::cout << actual_price << middle_long << l_diff << s_diff << short_volume << volume_disbalance << trend << "\n";
 	// вход в сделку
 	if (position.status == 0) {
-		if (actual_price < middle_long and actual_price < middle_short and l_diff > 0.05 and l_diff < 0.15 and long_volume > short_volume and volume_disbalance and trend == 2) {
+		if (actual_price < middle_short and long_volume < short_volume and volume_disbalance and trend == -2) {
 			position.status = 1;
 			position.price_in = actual_price;
 			position.qty = 100;
 			position.time_in = (*win_1.arr)[win_1.i1].T;
 		}
-		else if (actual_price > middle_long and actual_price > middle_short and s_diff < -0.05 and s_diff > -0.15 and long_volume < short_volume and volume_disbalance and trend == -2) {
+		else if (actual_price > middle_long and long_volume > short_volume and volume_disbalance and trend == 2) {
 			position.status = -1;
 			position.price_in = actual_price;
 			position.qty = 100;
@@ -122,7 +125,7 @@ void check_position(Win& win_1, Win& win_2, Position& position) {
 		}
 	}
 	// условия выхода из лонга
-	else if (position.status == 1 && (trend == -1 || trend == -2)) {
+	else if (position.status == 1 && (trend == 1 || trend == 2)) {
 		position.price_out = actual_price;
 		position.time_out = (*win_1.arr)[win_1.i1].T;
 		position.reason_out = "main trand out";
@@ -130,11 +133,49 @@ void check_position(Win& win_1, Win& win_2, Position& position) {
 		position.pnl = position.pct * position.qty - 0.001 * position.qty;
 	}
 	// условия выхода из шорта
-	else if (position.status == -1 && (trend == 1 || trend == 2)) {
+	else if (position.status == -1 && (trend == -1 || trend == -2)) {
 		position.price_out = actual_price;
 		position.time_out = (*win_1.arr)[win_1.i1].T;
 		position.reason_out = "main trand out";
 		position.pct = 1 - position.price_out / position.price_in;
 		position.pnl = position.pct * position.qty - 0.001 * position.qty;
+	}
+}
+
+// Преобразование Position -> json
+void to_json(json& j, const Position& p) {
+	j = json{
+		{"status",     p.status},
+		{"qty",        p.qty},
+		{"price_in",   p.price_in},
+		{"price_out",  p.price_out},
+		{"time_in",    p.time_in},
+		{"time_out",   p.time_out},
+		{"reason_out", p.reason_out},
+		{"pnl",        p.pnl},
+		{"pct",        p.pct*100}
+	};
+}
+
+bool save_positions(const std::string& path, const std::vector<Position>& positions) {
+	try {
+		json j = positions;  // автоматически использует to_json
+
+		std::ofstream file(path);
+		if (!file.is_open()) {
+			std::cerr << "[Ошибка] Не удалось открыть файл: " << path << "\n";
+			return false;
+		}
+
+		file << j.dump(2);  // 2 пробела для читаемого вида
+		file.close();
+
+		std::cout << "[Готово] Сохранено " << positions.size()
+			<< " позиций в " << path << "\n";
+		return true;
+	}
+	catch (const std::exception& e) {
+		std::cerr << "[Исключение] " << e.what() << "\n";
+		return false;
 	}
 }

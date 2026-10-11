@@ -11,8 +11,89 @@ from binance.client import Client
 from binance.exceptions import BinanceAPIException
 
 SYMBOL = os.getenv("SYMBOL")
-HOURS_BACK = os.getenv("HOURS_BACK")
-OUTPUT_FILE = os.getenv("PATH_DATA") + SYMBOL + ".json"
+HOURS_BACK = int(os.getenv("HOURS_BACK"))
+OUTPUT_TRADES = os.getenv("PATH_DATA") + "trades/" + SYMBOL + ".json"
+OUTPUT_KLINES = os.getenv("PATH_DATA") + "klines/"
+
+import json
+import os
+import time
+
+
+def save_1s_klines_last_hour(client, output_path, symbol):
+    """
+    Забирает 1s свечи с фьючерсного рынка (USDT-M) за последний час
+    и сохраняет в output_path/<symbol>.json
+    """
+    os.makedirs(output_path, exist_ok=True)
+
+    # Текущее время в миллисекундах
+    end_time = int(time.time() * 1000)
+    start_time = end_time - 3600 * 1000 * HOURS_BACK # минимум n час
+
+    all_candles = []
+    cursor = start_time
+
+    # Binance отдаёт максимум 1500 свечей за раз для futures,
+    # но берём 900 с запасом — безопаснее
+    batch_limit = 900
+
+    while cursor < end_time:
+        try:
+            klines = client.futures_klines(
+                symbol=symbol,
+                interval="1m",
+                startTime=cursor,
+                endTime=end_time,
+                limit=batch_limit,
+            )
+        except Exception as e:
+            print(f"[Ошибка] Запрос не удался: {e}")
+            break
+
+        if not klines:
+            break
+
+        for k in klines:
+            all_candles.append({
+                "open_time": k[0],
+                "open": k[1],
+                "high": k[2],
+                "low": k[3],
+                "close": k[4],
+                "volume": k[5],
+                "close_time": k[6],
+                "quote_volume": k[7],
+                "trades": k[8],
+                "taker_buy_base": k[9],
+                "taker_buy_quote": k[10],
+            })
+
+        # Следующий запрос начинаем с close_time последней свечи + 1 мс
+        last_close_time = klines[-1][6]
+        cursor = last_close_time + 1
+
+        print(f"[Прогресс] Уже загружено {len(all_candles)} свечей")
+        time.sleep(0.3)  # защита от лимитов API
+
+    # Убираем дубликаты по open_time
+    seen = set()
+    unique_candles = []
+    for c in all_candles:
+        if c["open_time"] not in seen:
+            seen.add(c["open_time"])
+            unique_candles.append(c)
+
+    # Сортируем по времени
+    unique_candles.sort(key=lambda x: x["open_time"])
+
+    # Сохраняем в файл
+    filename = os.path.join(output_path, f"{symbol}.json")
+    with open(filename, "w", encoding="utf-8") as f:
+        json.dump(unique_candles, f, indent=2, ensure_ascii=False)
+
+    print(f"[Готово] Сохранено {len(unique_candles)} свечей в {filename}")
+    return unique_candles
 
 
 def get_futures_trades(client, symbol, hours_back):
@@ -89,12 +170,14 @@ def main():
     except Exception as e:
         raise SystemExit(f"Не удалось подключиться к Binance: {e}")
 
-    # trades = get_futures_trades(client, SYMBOL, HOURS_BACK)
-    # if not trades:
-    #     print("Трейды не найдены.")
-    #     return
+    save_1s_klines_last_hour(client, output_path=OUTPUT_KLINES, symbol=SYMBOL)
 
-    # save_to_json(trades, OUTPUT_FILE)
+    trades = get_futures_trades(client, SYMBOL, HOURS_BACK)
+    if not trades:
+        print("Трейды не найдены.")
+        return
+
+    save_to_json(trades, OUTPUT_TRADES)
 
     # first = datetime.fromtimestamp(trades[0]["T"] / 1000, tz=timezone.utc)
     # last = datetime.fromtimestamp(trades[-1]["T"] / 1000, tz=timezone.utc)

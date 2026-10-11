@@ -13,8 +13,10 @@
 #include "json.hpp"
 using json = nlohmann::json;
 
-int64_t W_1 = 60;
-int64_t W_2 = 10;
+int64_t W_1 = 1200;
+int64_t W_2 = 400;
+
+std::string symbol = "CHIPUSDT";
 
 static std::string read_file(const std::string& path) {
 	std::ifstream f(path, std::ios::binary);
@@ -121,7 +123,7 @@ int win_editor(Win& win, int64_t& END_T) {
 int main() {
 	//setlocale(LC_ALL, "Russian");
 	try {
-		const std::string path = "../../../data/ONEUSDT.json";
+		const std::string path = "../../../data/trades/" + symbol + ".json";
 		const std::string text = read_file(path);
 		json j = json::parse(text);
 
@@ -188,6 +190,10 @@ int main() {
 			}*/
 
 			if (trades.back().T < END_T) {
+
+				const std::string path = "../../../data/positions/" + symbol + ".json";
+				save_positions(path, history);
+
 				std::cout << "\n\nREADY!\n";
 				std::cout << "+-----+--------+----------+-----------+-----------+----------+----------+\n";
 				std::cout << "|  #  | status |   qty    | price_in  | price_out |   pnl    |   pct    |\n";

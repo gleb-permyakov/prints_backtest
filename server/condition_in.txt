@@ -1,0 +1,54 @@
+if (position.status == 0) {
+	if (actual_price < middle_long and actual_price < middle_short and l_diff > 0.05 and l_diff < 0.15 and long_volume > short_volume and volume_disbalance and trend == 2) {
+		position.status = 1;
+		position.price_in = actual_price;
+		position.qty = 100;
+		position.time_in = (*win_1.arr)[win_1.i1].T;
+	}
+	else if (actual_price > middle_long and actual_price > middle_short and s_diff < -0.05 and s_diff > -0.15 and long_volume < short_volume and volume_disbalance and trend == -2) {
+		position.status = -1;
+		position.price_in = actual_price;
+		position.qty = 100;
+		position.time_in = (*win_1.arr)[win_1.i1].T;
+	}
+}
+
+
+PATH_DATA="../data/"
+SYMBOL="RLCUSDT"
+HOURS_BACK=24
+W_1=60
+W_2=10
+DELTA_TIME=0.5
+
+
+	if (position.status == 0) {
+		if (actual_price < middle_short and long_volume < short_volume and volume_disbalance and trend == -2) {
+			position.status = 1;
+			position.price_in = actual_price;
+			position.qty = 100;
+			position.time_in = (*win_1.arr)[win_1.i1].T;
+		}
+		else if (actual_price > middle_long and long_volume > short_volume and volume_disbalance and trend == 2) {
+			position.status = -1;
+			position.price_in = actual_price;
+			position.qty = 100;
+			position.time_in = (*win_1.arr)[win_1.i1].T;
+		}
+	}
+	// условия выхода из лонга
+	else if (position.status == 1 && (trend == 1 || trend == 2)) {
+		position.price_out = actual_price;
+		position.time_out = (*win_1.arr)[win_1.i1].T;
+		position.reason_out = "main trand out";
+		position.pct = position.price_out / position.price_in - 1;
+		position.pnl = position.pct * position.qty - 0.001 * position.qty;
+	}
+	// условия выхода из шорта
+	else if (position.status == -1 && (trend == -1 || trend == -2)) {
+		position.price_out = actual_price;
+		position.time_out = (*win_1.arr)[win_1.i1].T;
+		position.reason_out = "main trand out";
+		position.pct = 1 - position.price_out / position.price_in;
+		position.pnl = position.pct * position.qty - 0.001 * position.qty;
+	}
