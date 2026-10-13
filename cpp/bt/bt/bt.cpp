@@ -13,10 +13,10 @@
 #include "json.hpp"
 using json = nlohmann::json;
 
-int64_t W_1 = 1200;
-int64_t W_2 = 400;
+int64_t W_1 = 1000;
+int64_t W_2 = 200;
 
-std::string symbol = "CHIPUSDT";
+std::string symbol = "RLCUSDT";
 
 static std::string read_file(const std::string& path) {
 	std::ifstream f(path, std::ios::binary);
